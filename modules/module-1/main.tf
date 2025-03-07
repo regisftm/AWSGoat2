@@ -2,16 +2,15 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.24.0"
+      version = "~> 5.89.0"
     }
   }
 }
 provider "aws" {
-  region = "us-east-1"
+  region = "us-west-2"
 }
 
 data "aws_caller_identity" "current" {}
-
 
 data "archive_file" "lambda_zip" {
   type        = "zip"
@@ -3193,6 +3192,7 @@ locals {
 /* Creating a S3 Bucket for webfiles files upload. */
 resource "aws_s3_bucket" "bucket_upload" {
   bucket        = "production-blog-awsgoat-bucket-${data.aws_caller_identity.current.account_id}"
+  provider = aws
   force_destroy = true
   tags = {
     Name        = "Production bucket"
@@ -3276,6 +3276,7 @@ resource "aws_s3_object" "upload_folder_prod" {
 #Development bucket
 resource "aws_s3_bucket" "dev" {
   bucket = "dev-blog-awsgoat-bucket-${data.aws_caller_identity.current.account_id}"
+  provider = aws
 
   tags = {
     Name        = "Development bucket"
@@ -3354,6 +3355,8 @@ resource "aws_s3_object" "upload_folder_dev_2" {
 /* Creating a S3 Bucket for ec2-files upload. */
 resource "aws_s3_bucket" "bucket_temp" {
   bucket        = "ec2-temp-bucket-${data.aws_caller_identity.current.account_id}"
+  provider = aws
+
   force_destroy = true
 
   tags = {
@@ -3414,6 +3417,8 @@ resource "aws_s3_object" "upload_temp_object_2" {
 resource "aws_s3_bucket" "bucket_tf_files" {
   bucket        = "do-not-delete-awsgoat-state-files-${data.aws_caller_identity.current.account_id}"
   force_destroy = true
+  provider = aws
+
   tags = {
     Name        = "Do not delete Bucket"
     Environment = "Dev"
@@ -3440,7 +3445,7 @@ resource "aws_internet_gateway" "goat_gw" {
 resource "aws_subnet" "goat_subnet" {
   vpc_id                  = aws_vpc.goat_vpc.id
   cidr_block              = "192.168.0.0/24"
-  availability_zone       = "us-east-1a"
+  availability_zone       = "us-west-2a"
   map_public_ip_on_launch = true
   tags = {
     Name = "AWS_GOAT App subnet"
@@ -3569,15 +3574,6 @@ resource "aws_iam_policy" "goat_inline_policy_2" {
   })
 }
 
-data "template_file" "goat_script" {
-  template = file("resources/ec2/goat_user_data.tpl")
-  vars = {
-    S3_BUCKET_NAME = aws_s3_bucket.bucket_temp.bucket
-  }
-  depends_on = [aws_s3_bucket.bucket_temp]
-}
-
-
 data "aws_ami" "goat_ami" {
   most_recent = true
   filter {
@@ -3600,7 +3596,8 @@ resource "aws_instance" "goat_instance" {
   tags = {
     Name = "AWS_GOAT_DEV_INSTANCE"
   }
-  user_data = data.template_file.goat_script.rendered
+  user_data = templatefile("resources/ec2/goat_user_data.tpl", {S3_BUCKET_NAME = aws_s3_bucket.bucket_temp.bucket}) 
+
   depends_on = [
     aws_s3_object.upload_temp_object_2
   ]
@@ -3636,7 +3633,7 @@ resource "aws_dynamodb_table" "posts_table" {
 resource "null_resource" "populate_table" {
   provisioner "local-exec" {
     command     = <<EOF
-sed -i 's/replace-bucket-name/${aws_s3_bucket.bucket_upload.bucket}/g' resources/dynamodb/blog-posts.json
+sed -i '' 's/replace-bucket-name/${aws_s3_bucket.bucket_upload.bucket}/g' resources/dynamodb/blog-posts.json
 python3 resources/dynamodb/populate-table.py
 EOF
     interpreter = ["/bin/bash", "-c"]
@@ -3648,7 +3645,7 @@ EOF
 # To replace with IP Address of EC2-Instance in .ssh/config
 resource "null_resource" "file_replacement_ec2_ip" {
   provisioner "local-exec" {
-    command     = "sed -i 's/EC2_IP_ADDR/${aws_instance.goat_instance.public_ip}/g' resources/s3/shared/shared/files/.ssh/config.txt"
+    command     = "sed -i '' 's/EC2_IP_ADDR/${aws_instance.goat_instance.public_ip}/g' resources/s3/shared/shared/files/.ssh/config.txt"
     interpreter = ["/bin/bash", "-c"]
   }
   depends_on = [aws_instance.goat_instance]
@@ -3657,7 +3654,7 @@ resource "null_resource" "file_replacement_ec2_ip" {
 
 resource "null_resource" "file_replacement_lambda_react" {
   provisioner "local-exec" {
-    command     = "sed -i 's/replace-bucket-name/${aws_s3_bucket.bucket_upload.bucket}/g' resources/lambda/react/index.js"
+    command     = "sed -i '' 's/replace-bucket-name/${aws_s3_bucket.bucket_upload.bucket}/g' resources/lambda/react/index.js"
     interpreter = ["/bin/bash", "-c"]
   }
   depends_on = [
@@ -3667,7 +3664,7 @@ resource "null_resource" "file_replacement_lambda_react" {
 
 resource "null_resource" "file_replacement_lambda_data" {
   provisioner "local-exec" {
-    command     = "sed -i 's/replace-bucket-name/${aws_s3_bucket.bucket_upload.bucket}/g' resources/lambda/data/lambda_function.py"
+    command     = "sed -i '' 's/replace-bucket-name/${aws_s3_bucket.bucket_upload.bucket}/g' resources/lambda/data/lambda_function.py"
     interpreter = ["/bin/bash", "-c"]
   }
   depends_on = [
@@ -3679,10 +3676,10 @@ resource "null_resource" "file_replacement_lambda_data" {
 resource "null_resource" "file_replacement_api_gw" {
   provisioner "local-exec" {
     command     = <<EOF
-sed -i "s,API_GATEWAY_URL,${aws_api_gateway_deployment.apideploy_ba.invoke_url},g" resources/s3/webfiles/build/static/js/main.e5839717.js
-sed -i "s,API_GATEWAY_URL,${aws_api_gateway_deployment.apideploy_ba.invoke_url},g" resources/s3/webfiles/build/static/js/main.e5839717.js.map
-sed -i 's/"\/static/"https:\/\/${aws_s3_bucket.bucket_upload.bucket}\.s3\.amazonaws\.com\/build\/static/g' resources/s3/webfiles/build/static/js/main.e5839717.js
-sed -i 's/n.p+"static/"https:\/\/${aws_s3_bucket.bucket_upload.bucket}\.s3\.amazonaws\.com\/build\/static/g' resources/s3/webfiles/build/static/js/main.e5839717.js
+sed -i "" "s,API_GATEWAY_URL,${aws_api_gateway_deployment.apideploy_ba.invoke_url},g" resources/s3/webfiles/build/static/js/main.e5839717.js
+sed -i "" "s,API_GATEWAY_URL,${aws_api_gateway_deployment.apideploy_ba.invoke_url},g" resources/s3/webfiles/build/static/js/main.e5839717.js.map
+sed -i '' 's/"\/static/"https:\/\/${aws_s3_bucket.bucket_upload.bucket}\.s3\.amazonaws\.com\/build\/static/g' resources/s3/webfiles/build/static/js/main.e5839717.js
+sed -i '' 's/n.p+"static/"https:\/\/${aws_s3_bucket.bucket_upload.bucket}\.s3\.amazonaws\.com\/build\/static/g' resources/s3/webfiles/build/static/js/main.e5839717.js
 EOF
     interpreter = ["/bin/bash", "-c"]
   }
@@ -3695,9 +3692,9 @@ EOF
 resource "null_resource" "file_replacement_api_gw_cleanup" {
   provisioner "local-exec" {
     command     = <<EOF
-sed -i "s,${aws_api_gateway_deployment.apideploy_ba.invoke_url},API_GATEWAY_URL,g" resources/s3/webfiles/build/static/js/main.e5839717.js
-sed -i "s,${aws_api_gateway_deployment.apideploy_ba.invoke_url},API_GATEWAY_URL,g" resources/s3/webfiles/build/static/js/main.e5839717.js.map
-sed -i 's/${aws_instance.goat_instance.public_ip}/EC2_IP_ADDR/g' resources/s3/shared/shared/files/.ssh/config.txt
+sed -i "" "s,${aws_api_gateway_deployment.apideploy_ba.invoke_url},API_GATEWAY_URL,g" resources/s3/webfiles/build/static/js/main.e5839717.js
+sed -i "" "s,${aws_api_gateway_deployment.apideploy_ba.invoke_url},API_GATEWAY_URL,g" resources/s3/webfiles/build/static/js/main.e5839717.js.map
+sed -i '' 's/${aws_instance.goat_instance.public_ip}/EC2_IP_ADDR/g' resources/s3/shared/shared/files/.ssh/config.txt
 EOF
     interpreter = ["/bin/bash", "-c"]
   }

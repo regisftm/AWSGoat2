@@ -41,7 +41,7 @@ def upload_file(img_data, bucket, url=None):
         file = base64.b64decode(img_data)
     try:
         obj.put(Body=file, ACL="public-read")
-        location = "us-east-1"
+        location = "us-west-2"
         object_url = "https://%s.s3.amazonaws.com/%s" % (bucket, object_name)
         return object_url
     except Exception as e:
@@ -470,7 +470,7 @@ def lambda_handler(event, context):
             return generateResponse(200, json.dumps({"body": responses}))
 
         elif event["path"] == "/save-content":
-            bucket = "replace-bucket-name"
+            bucket = "production-blog-awsgoat-bucket-724772056834"
             if event["httpMethod"] == "POST":
                 img_data = json.loads(event["body"])["value"]
                 # print(img_data)
